@@ -179,7 +179,7 @@ public class MongoDBTarget implements UserStoreProvider {
 	}
 
 	public void setUserPassword(User user, Map<String, Object> request) throws ProvisioningException {
-		// TODO Auto-generated method stub
+		throw new ProvisioningException("Password not supported");
 
 	}
 
@@ -190,7 +190,22 @@ public class MongoDBTarget implements UserStoreProvider {
 	}
 
 	public void deleteUser(User user, Map<String, Object> request) throws ProvisioningException {
-		// TODO Auto-generated method stub
+		int approvalID = 0;
+		if (request.containsKey("APPROVAL_ID")) {
+			approvalID = (Integer) request.get("APPROVAL_ID");
+		}
+		
+		Workflow workflow = (Workflow) request.get("WORKFLOW");
+		
+		MongoIterable<String> collections = mongo.getDatabase(this.database).listCollectionNames();
+		for (String collection : collections) {
+			Document deleted = mongo.getDatabase(this.database).getCollection(collection).findOneAndDelete(and(eq("objectClass",this.userObjectClass),eq(this.userIdAttribute,user.getUserID())));
+			if (deleted != null) {
+				this.cfgMgr.getProvisioningEngine().logAction(name,true, ActionType.Delete,  approvalID, workflow, "_id", deleted.get("_id").toString());
+				break;
+			}
+			
+		}
 
 	}
 
