@@ -13,6 +13,7 @@
 package com.tremolosecurity.mongodb.unison;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -197,12 +198,47 @@ public class MongoDBTarget implements UserStoreProvider {
 		
 		Workflow workflow = (Workflow) request.get("WORKFLOW");
 		
+		
+		if (! user.getAttribs().containsKey(this.groupUserIdAttribute)) {
+			HashSet<String> attrs = new HashSet<String>();
+			attrs.add(this.userIdAttribute);
+			attrs.add(this.groupUserIdAttribute);
+			user = this.findUser(user.getUserID(), attrs, request);
+			if (user == null) {
+				return;
+			}
+		}
+		
+		String groupMemberID = user.getAttribs().get(this.groupUserIdAttribute).getValues().get(0);
+		
 		MongoIterable<String> collections = mongo.getDatabase(this.database).listCollectionNames();
 		for (String collection : collections) {
 			Document deleted = mongo.getDatabase(this.database).getCollection(collection).findOneAndDelete(and(eq("objectClass",this.userObjectClass),eq(this.userIdAttribute,user.getUserID())));
 			if (deleted != null) {
 				this.cfgMgr.getProvisioningEngine().logAction(name,true, ActionType.Delete,  approvalID, workflow, "_id", deleted.get("_id").toString());
 				break;
+			}
+			
+			//check to see if any groups references this object
+			FindIterable<Document> groups = mongo.getDatabase(this.database).getCollection(collection).find(and(eq("objectClass",this.groupObjectClass),eq(this.groupMemberAttribute,groupMemberID)));
+			for (Document group : groups) {
+				Object o = group.get(this.groupMemberAttribute);
+				if (o instanceof String) {
+					//one value, not mine
+					Document newVals = new Document();
+					newVals.append(this.groupMemberAttribute, "");
+					Document setGroup = new Document("$unset",newVals);
+					mongo.getDatabase(database).getCollection(collection).updateOne(eq("_id",group.getObjectId("_id")), setGroup);
+					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, "group", group.getString(this.groupIdAttribute));
+				} else {
+					List<String> members = (List<String>) o;
+					members.remove(groupMemberID);
+					Document newVals = new Document();
+					newVals.append(this.groupMemberAttribute, members);
+					Document setGroup = new Document("$set",newVals);
+					mongo.getDatabase(database).getCollection(collection).updateOne(eq("_id",group.getObjectId("_id")), setGroup);
+					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, "group", group.getString(this.groupIdAttribute));
+				}
 			}
 			
 		}
@@ -275,8 +311,13 @@ public class MongoDBTarget implements UserStoreProvider {
 						}
 					}
 					
+					if (user.getGroups().isEmpty()) {
+						return null;
+					} else {
+						return user;
+					}
 					
-					return user;
+					
 					
 				}
 			} catch (LDAPException e) {
