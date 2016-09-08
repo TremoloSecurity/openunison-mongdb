@@ -13,6 +13,7 @@
 package com.tremolosecurity.mongodb.unison;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ import java.util.Set;
 
 import org.apache.logging.log4j.Logger;
 import org.bson.Document;
+import org.bson.types.ObjectId;
 
 import com.mongodb.DB;
 import com.mongodb.MongoClient;
@@ -132,8 +134,19 @@ public class MongoDBTarget implements UserStoreProvider {
 			}
 		}
 		
+		addGroupsToUser(user, user.getGroups(),approvalID, workflow);
+		
+		
+		
+		
+		
+		
+
+	}
+
+	private void addGroupsToUser(User user, List<String> groupsToAddTo, int approvalID, Workflow workflow) throws ProvisioningException {
 		for (String collectionName : mongo.getDatabase(database).listCollectionNames()) {
-			FindIterable<Document> groups = mongo.getDatabase(this.database).getCollection(collectionName).find( and (eq("objectClass",this.groupObjectClass),in(this.groupIdAttribute,user.getGroups()))  );
+			FindIterable<Document> groups = mongo.getDatabase(this.database).getCollection(collectionName).find( and (eq("objectClass",this.groupObjectClass),in(this.groupIdAttribute,groupsToAddTo))  );
 			
 			for (Document group : groups) {
 				Document newGroup = new Document();
@@ -170,13 +183,53 @@ public class MongoDBTarget implements UserStoreProvider {
 				}
 			}
 		}
-		
-		
-		
-		
-		
-		
-
+	}
+	
+	private void rmGroupsFromUser(User user, List<String> groupsToAddTo, int approvalID, Workflow workflow) throws ProvisioningException {
+		for (String collectionName : mongo.getDatabase(database).listCollectionNames()) {
+			FindIterable<Document> groups = mongo.getDatabase(this.database).getCollection(collectionName).find( and (eq("objectClass",this.groupObjectClass),in(this.groupIdAttribute,groupsToAddTo))  );
+			
+			for (Document group : groups) {
+				Document newGroup = new Document();
+				
+				Object o = group.get(this.groupMemberAttribute);
+				ArrayList<String> groupMembers = new ArrayList<String>();
+				if (o != null) {
+					if (o instanceof List) {
+						groupMembers.addAll((List) o);
+					} else {
+						groupMembers.add((String) o);
+					}
+				}
+				
+				
+				
+				if (groupMembers.contains(user.getAttribs().get(this.groupUserIdAttribute).getValues().get(0))) {
+					groupMembers.remove(user.getAttribs().get(this.groupUserIdAttribute).getValues().get(0));
+					
+				}
+				
+				
+				if (groupMembers.size() > 1) {
+					newGroup.append(this.groupMemberAttribute, groupMembers);
+				} else if (groupMembers.size() == 1) {
+					newGroup.append(this.groupMemberAttribute, groupMembers.get(0));
+				} else {
+					newGroup.append(this.groupMemberAttribute, "");
+				}
+				
+				if (groupMembers.size() > 0) {
+					Document setGroup = new Document("$set",newGroup);
+					mongo.getDatabase(database).getCollection(collectionName).updateOne(eq("_id",group.getObjectId("_id")), setGroup);
+					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, "group", group.getString(this.groupIdAttribute));
+					
+				} else {
+					Document setGroup = new Document("$unset",newGroup);
+					mongo.getDatabase(database).getCollection(collectionName).updateOne(eq("_id",group.getObjectId("_id")), setGroup);
+					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, "group", group.getString(this.groupIdAttribute));
+				}
+			}
+		}
 	}
 
 	public void setUserPassword(User user, Map<String, Object> request) throws ProvisioningException {
@@ -186,8 +239,176 @@ public class MongoDBTarget implements UserStoreProvider {
 
 	public void syncUser(User user, boolean addOnly, Set<String> attributes, Map<String, Object> request)
 			throws ProvisioningException {
-		// TODO Auto-generated method stub
+		
+		
+		int approvalID = 0;
+		if (request.containsKey("APPROVAL_ID")) {
+			approvalID = (Integer) request.get("APPROVAL_ID");
+		}
+		
+		Workflow workflow = (Workflow) request.get("WORKFLOW");
+		
+		User fromServer = this.findUser(user.getUserID(), attributes, request);
+		
+		if (fromServer == null) {
+			this.createUser(user, attributes, request);
+		} else {
+			Document addChanges = new Document();
+			Document unsetChanges = new Document();
+			HashMap<String,List<String>> valsToAdd = new HashMap<String,List<String>>();
+			HashMap<String,List<String>> valsToDel = new HashMap<String,List<String>>();
+			
+			syncUserToServer(user, addOnly, attributes, fromServer, addChanges, unsetChanges,valsToAdd, valsToDel);
+			deleteAttrsFromServer(user, addOnly, attributes, fromServer, unsetChanges, valsToDel);
+			
+			if (! addChanges.isEmpty()) {
+				Document updateAttrs = new Document("$set",addChanges);
+				String collection = fromServer.getAttribs().get(this.collectionAttributeName).getValues().get(0);
+				String id = fromServer.getAttribs().get("_id").getValues().get(0);
+				mongo.getDatabase(this.database).getCollection(collection).updateOne(eq("_id",new ObjectId(id)), updateAttrs);
+			}
+			
+			if (! unsetChanges.isEmpty()) {
+				Document updateAttrs = new Document("$unset",unsetChanges);
+				String collection = fromServer.getAttribs().get(this.collectionAttributeName).getValues().get(0);
+				String id = fromServer.getAttribs().get("_id").getValues().get(0);
+				mongo.getDatabase(this.database).getCollection(collection).updateOne(eq("_id",new ObjectId(id)), updateAttrs);
+			}
+			
+			
+			
+			
+			for (String attrName : valsToAdd.keySet()) {
+				for (String val : valsToAdd.get(attrName)) {
+					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Add,  approvalID, workflow, attrName, val);
+				}
+			}
+			
+			for (String attrName : valsToDel.keySet()) {
+				for (String val : valsToDel.get(attrName)) {
+					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, attrName, val);
+				}
+			}
+			
+			ArrayList<String> groupsToAdd = new ArrayList<String>();
+			ArrayList<String> groupsToRm = new ArrayList<String>();
+			for (String groupFromUser : user.getGroups()) {
+				if (! fromServer.getGroups().contains(groupFromUser)) {
+					groupsToAdd.add(groupFromUser);
+				}
+			}
+			
+			if (! addOnly) {
+				for (String groupFromServer : fromServer.getGroups()) {
+					if (! user.getGroups().contains(groupFromServer)) {
+						groupsToRm.add(groupFromServer);
+					}
+				}
+			}
+			
+			if (! groupsToAdd.isEmpty()) {
+				this.addGroupsToUser(user, groupsToAdd, approvalID, workflow);
+			}
+			
+			if (! groupsToRm.isEmpty()) {
+				this.rmGroupsFromUser(user, groupsToRm, approvalID, workflow);
+			}
+			
+			
+		}
 
+	}
+
+	private void deleteAttrsFromServer(User user, boolean addOnly, Set<String> attributes, User fromServer,
+			Document unsetChanges, HashMap<String, List<String>> valsToDel) {
+		if (! addOnly) {
+			for (String attrNameFromServer : fromServer.getAttribs().keySet()) {
+				if (attributes.contains(attrNameFromServer)) {
+					Attribute attrFromServer = fromServer.getAttribs().get(attrNameFromServer);
+					Attribute attrFromUser = user.getAttribs().get(attrNameFromServer);
+					if (attrFromUser == null) {
+						//attribute to be removed
+						ArrayList<String> vals = new ArrayList<String>();
+						vals.addAll(attrFromServer.getValues());
+						valsToDel.put(attrNameFromServer, vals);
+						unsetChanges.append(attrNameFromServer, "");
+					}
+				}
+			}
+		}
+	}
+
+	private void syncUserToServer(User user, boolean addOnly, Set<String> attributes, User fromServer,
+			Document addChanges, Document unsetChanges, HashMap<String, List<String>> valsToAdd, HashMap<String, List<String>> valsToDel) {
+		for (String attrNameFromUser : user.getAttribs().keySet()) {
+			
+			
+			if (attributes.contains(attrNameFromUser) && ! attrNameFromUser.equalsIgnoreCase(this.collectionAttributeName) && ! attrNameFromUser.equalsIgnoreCase("_id")) {
+				Attribute attrFromUser = user.getAttribs().get(attrNameFromUser);
+				Attribute attrFromServer = fromServer.getAttribs().get(attrNameFromUser);
+				
+				if (attrFromServer == null) {
+					//doesnt exist, need to do an add
+					addChanges.append(attrNameFromUser, attrFromUser.getValues());
+					valsToAdd.put(attrNameFromUser, attrFromUser.getValues());
+				} else {
+					ArrayList<String> attrValsToAdd = new ArrayList<String>();
+					ArrayList<String> attrValsToRm = new ArrayList<String>();
+					HashSet<String> valsFromServer = new HashSet<String>();
+					
+					for (String val : fromServer.getAttribs().get(attrNameFromUser).getValues()) {
+						valsFromServer.add(val.toLowerCase());
+					}
+					
+					for (String valUser : user.getAttribs().get(attrNameFromUser).getValues()) {
+						if (! valsFromServer.contains(valUser.toLowerCase())) {
+							//add the value
+							attrValsToAdd.add(valUser);
+						}
+					}
+					
+					if (! addOnly) {
+						HashSet<String> valsFromUser = new HashSet<String>();
+						for (String val : user.getAttribs().get(attrNameFromUser).getValues()) {
+							valsFromUser.add(val.toLowerCase());
+						}
+						
+						for (String val : fromServer.getAttribs().get(attrNameFromUser).getValues()) {
+							if (! valsFromUser.contains(val.toLowerCase())) {
+								attrValsToRm.add(val);
+							}
+						}
+					}
+					
+					
+					if (! attrValsToAdd.isEmpty() || ! attrValsToRm.isEmpty()) {
+					
+						ArrayList<String> newVals = new ArrayList<String>();
+						newVals.addAll(fromServer.getAttribs().get(attrNameFromUser).getValues());
+						
+						newVals.removeAll(attrValsToRm);
+						newVals.addAll(attrValsToAdd);
+						
+						valsToAdd.put(attrNameFromUser, attrValsToAdd);
+						if (! attrValsToRm.isEmpty()) {
+							valsToDel.put(attrNameFromUser, attrValsToRm);
+						}
+						
+						if (newVals.isEmpty()) {
+							unsetChanges.append(attrNameFromUser, "");
+						} else {
+							if (newVals.size() > 1) {
+								addChanges.append(attrNameFromUser, newVals);
+							} else {
+								addChanges.append(attrNameFromUser, newVals.get(0));
+							}
+							
+						}
+					}
+					
+				}
+			} 
+		}
 	}
 
 	public void deleteUser(User user, Map<String, Object> request) throws ProvisioningException {
@@ -280,6 +501,8 @@ public class MongoDBTarget implements UserStoreProvider {
 					}
 				}
 				
+				user.getAttribs().put(this.collectionAttributeName, new Attribute(this.collectionAttributeName,col));
+				user.getAttribs().put("_id", new Attribute("_id",doc.getObjectId("_id").toString()));
 				
 				return user;
 			}
