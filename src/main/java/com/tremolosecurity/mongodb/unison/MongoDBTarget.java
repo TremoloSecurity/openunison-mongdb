@@ -253,70 +253,82 @@ public class MongoDBTarget implements UserStoreProvider {
 		if (fromServer == null) {
 			this.createUser(user, attributes, request);
 		} else {
-			Document addChanges = new Document();
-			Document unsetChanges = new Document();
-			HashMap<String,List<String>> valsToAdd = new HashMap<String,List<String>>();
-			HashMap<String,List<String>> valsToDel = new HashMap<String,List<String>>();
-			
-			syncUserToServer(user, addOnly, attributes, fromServer, addChanges, unsetChanges,valsToAdd, valsToDel);
-			deleteAttrsFromServer(user, addOnly, attributes, fromServer, unsetChanges, valsToDel);
-			
-			if (! addChanges.isEmpty()) {
-				Document updateAttrs = new Document("$set",addChanges);
-				String collection = fromServer.getAttribs().get(this.collectionAttributeName).getValues().get(0);
-				String id = fromServer.getAttribs().get("_id").getValues().get(0);
-				mongo.getDatabase(this.database).getCollection(collection).updateOne(eq("_id",new ObjectId(id)), updateAttrs);
+			if (user.getAttribs().containsKey("_id")) {
+				updateAttributes(user, addOnly, attributes, approvalID, workflow, fromServer);
 			}
 			
-			if (! unsetChanges.isEmpty()) {
-				Document updateAttrs = new Document("$unset",unsetChanges);
-				String collection = fromServer.getAttribs().get(this.collectionAttributeName).getValues().get(0);
-				String id = fromServer.getAttribs().get("_id").getValues().get(0);
-				mongo.getDatabase(this.database).getCollection(collection).updateOne(eq("_id",new ObjectId(id)), updateAttrs);
-			}
-			
-			
-			
-			
-			for (String attrName : valsToAdd.keySet()) {
-				for (String val : valsToAdd.get(attrName)) {
-					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Add,  approvalID, workflow, attrName, val);
-				}
-			}
-			
-			for (String attrName : valsToDel.keySet()) {
-				for (String val : valsToDel.get(attrName)) {
-					this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, attrName, val);
-				}
-			}
-			
-			ArrayList<String> groupsToAdd = new ArrayList<String>();
-			ArrayList<String> groupsToRm = new ArrayList<String>();
-			for (String groupFromUser : user.getGroups()) {
-				if (! fromServer.getGroups().contains(groupFromUser)) {
-					groupsToAdd.add(groupFromUser);
-				}
-			}
-			
-			if (! addOnly) {
-				for (String groupFromServer : fromServer.getGroups()) {
-					if (! user.getGroups().contains(groupFromServer)) {
-						groupsToRm.add(groupFromServer);
-					}
-				}
-			}
-			
-			if (! groupsToAdd.isEmpty()) {
-				this.addGroupsToUser(user, groupsToAdd, approvalID, workflow);
-			}
-			
-			if (! groupsToRm.isEmpty()) {
-				this.rmGroupsFromUser(user, groupsToRm, approvalID, workflow);
-			}
+			updateGroups(user, addOnly, approvalID, workflow, fromServer);
 			
 			
 		}
 
+	}
+
+	private void updateGroups(User user, boolean addOnly, int approvalID, Workflow workflow, User fromServer)
+			throws ProvisioningException {
+		ArrayList<String> groupsToAdd = new ArrayList<String>();
+		ArrayList<String> groupsToRm = new ArrayList<String>();
+		for (String groupFromUser : user.getGroups()) {
+			if (! fromServer.getGroups().contains(groupFromUser)) {
+				groupsToAdd.add(groupFromUser);
+			}
+		}
+		
+		if (! addOnly) {
+			for (String groupFromServer : fromServer.getGroups()) {
+				if (! user.getGroups().contains(groupFromServer)) {
+					groupsToRm.add(groupFromServer);
+				}
+			}
+		}
+		
+		if (! groupsToAdd.isEmpty()) {
+			this.addGroupsToUser(user, groupsToAdd, approvalID, workflow);
+		}
+		
+		if (! groupsToRm.isEmpty()) {
+			this.rmGroupsFromUser(user, groupsToRm, approvalID, workflow);
+		}
+	}
+
+	private void updateAttributes(User user, boolean addOnly, Set<String> attributes, int approvalID, Workflow workflow,
+			User fromServer) throws ProvisioningException {
+		Document addChanges = new Document();
+		Document unsetChanges = new Document();
+		HashMap<String,List<String>> valsToAdd = new HashMap<String,List<String>>();
+		HashMap<String,List<String>> valsToDel = new HashMap<String,List<String>>();
+		
+		syncUserToServer(user, addOnly, attributes, fromServer, addChanges, unsetChanges,valsToAdd, valsToDel);
+		deleteAttrsFromServer(user, addOnly, attributes, fromServer, unsetChanges, valsToDel);
+		
+		if (! addChanges.isEmpty()) {
+			Document updateAttrs = new Document("$set",addChanges);
+			String collection = fromServer.getAttribs().get(this.collectionAttributeName).getValues().get(0);
+			String id = fromServer.getAttribs().get("_id").getValues().get(0);
+			mongo.getDatabase(this.database).getCollection(collection).updateOne(eq("_id",new ObjectId(id)), updateAttrs);
+		}
+		
+		if (! unsetChanges.isEmpty()) {
+			Document updateAttrs = new Document("$unset",unsetChanges);
+			String collection = fromServer.getAttribs().get(this.collectionAttributeName).getValues().get(0);
+			String id = fromServer.getAttribs().get("_id").getValues().get(0);
+			mongo.getDatabase(this.database).getCollection(collection).updateOne(eq("_id",new ObjectId(id)), updateAttrs);
+		}
+		
+		
+		
+		
+		for (String attrName : valsToAdd.keySet()) {
+			for (String val : valsToAdd.get(attrName)) {
+				this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Add,  approvalID, workflow, attrName, val);
+			}
+		}
+		
+		for (String attrName : valsToDel.keySet()) {
+			for (String val : valsToDel.get(attrName)) {
+				this.cfgMgr.getProvisioningEngine().logAction(name,false, ActionType.Delete,  approvalID, workflow, attrName, val);
+			}
+		}
 	}
 
 	private void deleteAttrsFromServer(User user, boolean addOnly, Set<String> attributes, User fromServer,
