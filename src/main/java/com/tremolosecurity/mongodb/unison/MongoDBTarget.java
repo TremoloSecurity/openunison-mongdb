@@ -250,7 +250,7 @@ public class MongoDBTarget implements UserStoreProvider {
 		
 		User fromServer = this.findUser(user.getUserID(), attributes, request);
 		
-		if (fromServer == null) {
+		if (fromServer == null || ((! this.supportExternalUsers) && (! fromServer.getAttribs().containsKey("_id")))) {
 			this.createUser(user, attributes, request);
 		} else {
 			if (user.getAttribs().containsKey("_id")) {
@@ -442,13 +442,14 @@ public class MongoDBTarget implements UserStoreProvider {
 			}
 		}
 		
+
+		
 		String groupMemberID = user.getAttribs().get(this.groupUserIdAttribute).getValues().get(0);
 		
 		MongoIterable<String> collections = mongo.getDatabase(this.database).listCollectionNames();
 		for (String collection : collections) {
 			Document deleted = mongo.getDatabase(this.database).getCollection(collection).findOneAndDelete(and(eq("objectClass",this.userObjectClass),eq(this.userIdAttribute,user.getUserID())));
 			if (deleted != null) {
-				this.cfgMgr.getProvisioningEngine().logAction(name,true, ActionType.Delete,  approvalID, workflow, "_id", deleted.get("_id").toString());
 				break;
 			}
 			
