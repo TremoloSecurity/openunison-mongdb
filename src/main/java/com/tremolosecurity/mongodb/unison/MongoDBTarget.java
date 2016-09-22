@@ -547,11 +547,9 @@ public class MongoDBTarget implements UserStoreProvider {
 						}
 					}
 					
-					if (user.getGroups().isEmpty()) {
-						return null;
-					} else {
-						return user;
-					}
+					
+					return user;
+					
 					
 					
 					

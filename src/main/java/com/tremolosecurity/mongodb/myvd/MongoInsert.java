@@ -84,12 +84,16 @@ public class MongoInsert implements Insert {
 	}
 	
 	String getLocalBase(String dn) {
-		String v = dn.substring(0,dn.length() - this.lcaseBase.length());
-		if (! v.isEmpty()) {
-			//remove the comma
-			v = v.substring(0, v.length() - 1);
+		if (dn.length() < this.lcaseBase.length()) {
+			return "";
+		} else {
+			String v = dn.substring(0,dn.length() - this.lcaseBase.length());
+			if (! v.isEmpty()) {
+				//remove the comma
+				v = v.substring(0, v.length() - 1);
+			}
+			return v;
 		}
-		return v;
 	}
 	
 	//the collection will be the ou= of the base after rmoving the namespace
@@ -267,13 +271,31 @@ public class MongoInsert implements Insert {
 				throw new LDAPException("Could not find object",LDAPException.NO_SUCH_OBJECT,LDAPException.resultCodeToString(LDAPException.NO_SUCH_OBJECT));
 			}
 			
-			FindIterable<Document> searchRes = mongo.getDatabase(this.database).getCollection(collectionName).find(eq(rdn.getAttribute().getName(),rdn.getAttribute().getStringValue()));
+			//first see if we get results with the filter
+			ArrayList<FilterNode> children = new ArrayList<FilterNode>();
+			children.add(new FilterNode(FilterType.EQUALS,rdn.getAttribute().getName(),rdn.getAttribute().getStringValue()));
+			children.add(filterToUser.getRoot());
+			FilterNode and = new FilterNode(FilterType.AND,children);
+			mongoFilter = this.convertFilterToMongo(and);
+			
+			
+			FindIterable<Document> searchRes = mongo.getDatabase(this.database).getCollection(collectionName).find(mongoFilter);
 			if (searchRes == null) {
-				throw new LDAPException("Could not find object",LDAPException.NO_SUCH_OBJECT,LDAPException.resultCodeToString(LDAPException.NO_SUCH_OBJECT));
+				//nothing, need to know if the object exists or if its just the filter that didn't match
+				searchRes = mongo.getDatabase(this.database).getCollection(collectionName).find(eq(rdn.getAttribute().getName(),rdn.getAttribute().getStringValue()));
+				
+				if (searchRes == null) {
+					throw new LDAPException("Could not find object",LDAPException.NO_SUCH_OBJECT,LDAPException.resultCodeToString(LDAPException.NO_SUCH_OBJECT));
+				}
 			} else {
 				Document doc = searchRes.first();
 				if (doc == null) {
-					throw new LDAPException("Could not find object",LDAPException.NO_SUCH_OBJECT,LDAPException.resultCodeToString(LDAPException.NO_SUCH_OBJECT));
+					
+					//nothing, need to know if the object exists or if its just the filter that didn't match
+					searchRes = mongo.getDatabase(this.database).getCollection(collectionName).find(eq(rdn.getAttribute().getName(),rdn.getAttribute().getStringValue()));
+					if (searchRes.first() == null) {
+						throw new LDAPException("Could not find object",LDAPException.NO_SUCH_OBJECT,LDAPException.resultCodeToString(LDAPException.NO_SUCH_OBJECT));
+					}
 				} else {
 					res.add(createEntry(doc,collectionName));
 				}
