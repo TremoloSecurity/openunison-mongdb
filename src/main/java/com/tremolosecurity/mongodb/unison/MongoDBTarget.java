@@ -70,6 +70,10 @@ public class MongoDBTarget implements UserStoreProvider {
 	private ConfigManager cfgMgr;
 	
 
+	public MongoClient getMongo() {
+		return this.mongo;
+	}
+	
 	public void createUser(User user, Set<String> attributes, Map<String, Object> request)
 			throws ProvisioningException {
 		
@@ -605,6 +609,18 @@ public class MongoDBTarget implements UserStoreProvider {
 				
 			}});
 
+	}
+
+	public String getDatabaseName() {
+		return this.database;
+	}
+
+	public Object getGroupObjectClassName() {
+		return this.groupObjectClass;
+	}
+
+	public String getGroupNameAttribute() {
+		return this.groupRDN;
 	}
 
 }
